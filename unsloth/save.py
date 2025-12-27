@@ -69,8 +69,8 @@ __all__ = [
 # llama.cpp specific targets - all takes 90s. Below takes 60s
 LLAMA_CPP_TARGETS = [
     "llama-quantize",
-    "llama-export-lora",
     "llama-cli",
+    "llama-server",
 ]
 
 # Check environments
@@ -1429,7 +1429,7 @@ language:
 - **License:** apache-2.0
 - **Finetuned from model :** {base_model}
 
-This {model_type} model was trained 2x faster with [Unsloth](https://github.com/unslothai/unsloth) and Huggingface's TRL library.
+This {model_type} model was trained 2x faster with [Unsloth](https://github.com/unslothai/unsloth)
 
 [<img src="https://raw.githubusercontent.com/unslothai/unsloth/main/images/unsloth%20made%20with%20love.png" width="200"/>](https://github.com/unslothai/unsloth)
 """
@@ -2234,13 +2234,13 @@ tags:
 {"- vision-language-model" if is_vlm else ""}
 ---
 
-# {repo_id.split("/")[-1]} - GGUF
+# {repo_id.split("/")[-1]} : GGUF
 
 This model was finetuned and converted to GGUF format using [Unsloth](https://github.com/unslothai/unsloth).
 
 **Example usage**:
-- For text only LLMs:    **llama-cli** **--hf** repo_id/model_name **-p** "why is the sky blue?"
-- For multimodal models: **llama-mtmd-cli** **-m** model_name.gguf **--mmproj** mmproj_file.gguf
+- For text only LLMs:    `./llama.cpp/llama-cli -hf {repo_id} --jinja`
+- For multimodal models: `./llama.cpp/llama-mtmd-cli -hf {repo_id} --jinja`
 
 ## Available Model files:
 """
@@ -2280,6 +2280,11 @@ This model was finetuned and converted to GGUF format using [Unsloth](https://gi
             readme_content += (
                 "The model's BOS token behavior was adjusted for GGUF compatibility.\n"
             )
+
+        readme_content += (
+            "This was trained 2x faster with [Unsloth](https://github.com/unslothai/unsloth)\n"
+            '[<img src="https://raw.githubusercontent.com/unslothai/unsloth/main/images/unsloth%20made%20with%20love.png" width="200"/>](https://github.com/unslothai/unsloth)\n'
+        )
 
         readme_path = os.path.join(actual_save_directory, "README.md")
         with open(readme_path, "w") as f:
@@ -2745,6 +2750,17 @@ def _unsloth_save_torchao_with_attached_config(
     """Save a QAT-trained model by converting fake-quantized weights to real quantized weights."""
     # Convert QAT fake-quantized weights to real quantized weights
     _convert_torchao_model(model)
+    # PEFT models also might come here, so parse it
+    if isinstance(model, PeftModelForCausalLM):
+        _unsloth_save_torchao_with_given_config(
+            model = model,
+            save_directory = save_directory,
+            tokenizer = tokenizer,
+            torchao_config = model.config.quantization_config,
+            push_to_hub = push_to_hub,
+            token = token,
+        )
+        return
 
     # TorchAO does not support safe_serialization reliably
     safe_serialization = False
@@ -2806,7 +2822,10 @@ def _unsloth_save_torchao_with_given_config(
     )
     from torchao import quantize_
 
-    quantization_config = TorchAoConfig(quant_type = torchao_config)
+    if isinstance(torchao_config, TorchAoConfig):
+        quantization_config = torchao_config
+    else:
+        quantization_config = TorchAoConfig(quant_type = torchao_config)
 
     # Determine if this is a VLM
     is_vlm = False
@@ -2897,7 +2916,7 @@ def unsloth_save_pretrained_torchao(
     )
 
     if torchao_config is not None:
-        # PTQ path: user provided a config, model must NOT have QAT config
+        # PTQ path: user provided a config, model must NOT have QAT config unless PEFT
         assert not has_qat_config, (
             "Unsloth: You passed `torchao_config` but this model was trained with `qat_scheme`. "
             "For QAT models, do not pass `torchao_config` - the quantization config is already "
@@ -3010,7 +3029,11 @@ def patch_saving_functions(model, vision = False):
 
     original_model = model
     while True:
-        if original_model.push_to_hub.__name__ != "unsloth_push_to_hub":
+        # Check if push_to_hub exists before accessing its __name__
+        if (
+            hasattr(original_model, "push_to_hub")
+            and original_model.push_to_hub.__name__ != "unsloth_push_to_hub"
+        ):
             original_model.original_push_to_hub = original_model.push_to_hub
             original_model.push_to_hub = types.MethodType(
                 unsloth_push_to_hub, original_model

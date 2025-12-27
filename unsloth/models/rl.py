@@ -741,6 +741,7 @@ def _patch_trl_rl_trainers(trainer_file = "grpo_trainer"):
         "generation_kwargs": {},
         "bf16": False,
         "fp16": False,
+        "report_to": "none",
         "include_tokens_per_second": False,
         "include_num_input_tokens_seen": False,
         "auto_find_batch_size": False,  # Auto /2 batch size - too many people complained so removing
@@ -811,8 +812,13 @@ def _patch_trl_rl_trainers(trainer_file = "grpo_trainer"):
     if "dataset_num_proc" in call_args:
         num_proc_check = (
             "if dataset_num_proc is None:\n"
-            "    from multiprocessing import cpu_count\n"
-            "    dataset_num_proc = min(max(cpu_count()+4, 2), 64)\n"
+            "    import psutil\n"
+            "    dataset_num_proc = min(max(psutil.cpu_count()+4, 2), 64)\n"
+            "    memory_gb_left = psutil.virtual_memory().available / (1024**3)\n"
+            "    if   memory_gb_left <=  4: dataset_num_proc = 1 # Too risky, so set to 1\n"
+            "    elif memory_gb_left <=  6: dataset_num_proc = min(2, dataset_num_proc)\n"
+            "    elif memory_gb_left <= 10: dataset_num_proc = min(4, dataset_num_proc)\n"
+            "    elif memory_gb_left <= 14: dataset_num_proc = min(6, dataset_num_proc)\n"
         )
         extra_args += num_proc_check
 
@@ -906,8 +912,6 @@ def _patch_trl_rl_trainers(trainer_file = "grpo_trainer"):
         process_extra_args = RL_CONFIG_CHANGES[trainer_file]
         for process_extra_arg in process_extra_args:
             extra_args += process_extra_arg(old_RLTrainer_source, old_RLConfig_source)
-
-    # Edit report_to and default it to nothing if max_steps is like 60
 
     # Create RLConfig args
     extra_args = extra_args.split("\n")

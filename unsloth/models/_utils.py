@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-__version__ = "2025.12.5"
+__version__ = "2025.12.9"
 
 __all__ = [
     "SUPPORTS_BFLOAT16",
@@ -72,6 +72,7 @@ __all__ = [
     "patch_hf_quantizer",
     "verify_fp8_support_if_applicable",
     "_get_inference_mode_context_manager",
+    "hf_login",
 ]
 
 import torch
@@ -412,16 +413,6 @@ try:
     del modeling_utils_logger
 except:
     pass
-
-# Flax classes are deprecated and will be removed in Diffusers v1.0.0.
-try:
-    from diffusers.utils import logger as diffusers_logger
-
-    diffusers_logger.addFilter(HideLoggingMessage("are deprecated"))
-    del diffusers_logger
-except:
-    pass
-
 
 # Errors out on
 # Some weights of Gemma3nForConditionalGeneration were not initialized from the model checkpoint
@@ -2354,3 +2345,23 @@ def _get_inference_mode_context_manager(model: torch.nn.Module):
         return torch.no_grad()
     else:
         return torch.inference_mode()
+
+
+def hf_login(token: Optional[str] = None) -> Optional[str]:
+    if token is None:
+        try:
+            from huggingface_hub import get_token
+
+            token = get_token()
+            if token is None:
+                return None
+        except:
+            return None
+    try:
+        from huggingface_hub import login
+
+        login(token = token)
+        return token
+    except Exception as e:
+        logger.info(f"Failed to login to huggingface using token with error: {e}")
+    return token
